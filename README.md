@@ -1,7 +1,5 @@
 # MedBook - AI-Assisted Medical Book Search App
 
-![MedBook Logo](Assets.xcassets/AppIcon.appiconset/Icon-1024.png)
-
 ## Overview
 
 MedBook is a modern iOS application that allows users to search for medical books, view details, and manage bookmarks. The app provides a seamless experience for medical professionals and students to find relevant literature. Built with UIKit and following the MVVM architecture, MedBook demonstrates the power of AI-assisted development in creating production-ready applications.
