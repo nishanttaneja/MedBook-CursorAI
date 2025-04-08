@@ -43,12 +43,21 @@ class HomeViewController: BaseViewController {
         action: nil
     )
     
-    private lazy var sortButton = UIBarButtonItem(
-        image: UIImage(systemName: "arrow.up.arrow.down"),
-        style: .plain,
-        target: nil,
-        action: nil
-    )
+    private lazy var segmentedControl: UISegmentedControl = {
+        let items = ["Title", "Rating", "Hits"]
+        let control = UISegmentedControl(items: items)
+        control.selectedSegmentIndex = 0
+        control.addTarget(self, action: #selector(segmentedControlValueChanged), for: .valueChanged)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        return control
+    }()
+    
+    private let segmentedControlContainer: UIView = {
+        let view = UIView()
+        view.backgroundColor = .systemBackground
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
     
     override func setupUI() {
         super.setupUI()
@@ -57,8 +66,6 @@ class HomeViewController: BaseViewController {
         // Configure button targets
         bookmarksButton.target = self
         bookmarksButton.action = #selector(toggleBookmarks)
-        sortButton.target = self
-        sortButton.action = #selector(showSortOptions)
         
         // Add logout button
         let logoutButton = UIBarButtonItem(
@@ -67,17 +74,28 @@ class HomeViewController: BaseViewController {
             target: self,
             action: #selector(logoutTapped)
         )
-        navigationItem.rightBarButtonItems = [logoutButton, sortButton, bookmarksButton]
+        navigationItem.rightBarButtonItems = [logoutButton, bookmarksButton]
         
         navigationItem.searchController = searchController
         navigationItem.hidesSearchBarWhenScrolling = false
         
+        view.addSubview(segmentedControlContainer)
+        segmentedControlContainer.addSubview(segmentedControl)
         view.addSubview(tableView)
         view.addSubview(activityIndicator)
         view.addSubview(emptyStateLabel)
         
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            segmentedControlContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            segmentedControlContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            segmentedControlContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            segmentedControlContainer.heightAnchor.constraint(equalToConstant: 44),
+            
+            segmentedControl.centerXAnchor.constraint(equalTo: segmentedControlContainer.centerXAnchor),
+            segmentedControl.centerYAnchor.constraint(equalTo: segmentedControlContainer.centerYAnchor),
+            segmentedControl.widthAnchor.constraint(equalTo: segmentedControlContainer.widthAnchor, multiplier: 0.9),
+            
+            tableView.topAnchor.constraint(equalTo: segmentedControlContainer.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -152,24 +170,10 @@ class HomeViewController: BaseViewController {
         }
     }
     
-    @objc private func showSortOptions() {
-        let alert = UIAlertController(title: "Sort Books", message: nil, preferredStyle: .actionSheet)
-        
-        let sortOptions: [(String, BookSortOption)] = [
-            ("Title", .title),
-            ("Rating", .rating),
-            ("Hits", .hits)
-        ]
-        
-        for (title, option) in sortOptions {
-            alert.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
-                self?.viewModel.sortBooks(by: option)
-            })
-        }
-        
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        
-        present(alert, animated: true)
+    @objc private func segmentedControlValueChanged() {
+        let sortOptions: [BookSortOption] = [.title, .rating, .hits]
+        let selectedOption = sortOptions[segmentedControl.selectedSegmentIndex]
+        viewModel.sortBooks(by: selectedOption)
     }
 }
 
