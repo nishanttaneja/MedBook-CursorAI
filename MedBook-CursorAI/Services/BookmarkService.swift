@@ -4,24 +4,39 @@ import CoreData
 class BookmarkService {
     static let shared = BookmarkService()
     
-    private init() {}
+    private let context: NSManagedObjectContext
+    private var cachedBookmarkedBooks: [BookmarkedBook]?
+    private var lastFetchTime: Date?
+    private let cacheValidityDuration: TimeInterval = 30 // Cache validity in seconds
     
-    private let context = CoreDataManager.shared.context
+    init(context: NSManagedObjectContext = CoreDataManager.shared.context) {
+        self.context = context
+    }
     
     func isBookmarked(bookId: String) -> Bool {
-        let fetchRequest: NSFetchRequest<BookmarkedBook> = BookmarkedBook.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "bookId == %@", bookId)
+        // First check cache
+        if let cachedBooks = cachedBookmarkedBooks {
+            return cachedBooks.contains { $0.bookId == bookId }
+        }
+        
+        // If no cache, query Core Data
+        let request: NSFetchRequest<BookmarkedBook> = BookmarkedBook.fetchRequest()
+        request.predicate = NSPredicate(format: "bookId == %@", bookId)
         
         do {
-            let count = try context.count(for: fetchRequest)
+            let count = try context.count(for: request)
             return count > 0
         } catch {
-            print("Error checking bookmark status: \(error)")
+            print("❌ Failed to check bookmark status: \(error)")
             return false
         }
     }
     
     func toggleBookmark(for book: Book) {
+        // Invalidate cache when modifying bookmarks
+        cachedBookmarkedBooks = nil
+        lastFetchTime = nil
+        
         if isBookmarked(bookId: book.id) {
             removeBookmark(bookId: book.id)
         } else {
@@ -34,7 +49,7 @@ class BookmarkService {
         bookmarkedBook.bookId = book.id
         bookmarkedBook.title = book.title
         bookmarkedBook.authorName = book.authorName?.first
-        bookmarkedBook.ratingsAverage = book.ratingsAverage ?? 0
+        bookmarkedBook.ratingsAverage = book.ratingsAverage ?? 0.0
         bookmarkedBook.ratingsCount = Int32(book.ratingsCount ?? 0)
         bookmarkedBook.coverId = Int32(book.coverId ?? 0)
         bookmarkedBook.dateAdded = Date()
@@ -57,51 +72,45 @@ class BookmarkService {
     }
     
     private func removeBookmark(bookId: String) {
-        let fetchRequest: NSFetchRequest<BookmarkedBook> = BookmarkedBook.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "bookId == %@", bookId)
+        let request: NSFetchRequest<BookmarkedBook> = BookmarkedBook.fetchRequest()
+        request.predicate = NSPredicate(format: "bookId == %@", bookId)
         
         do {
-            let bookmarks = try context.fetch(fetchRequest)
-            bookmarks.forEach { context.delete($0) }
+            let books = try context.fetch(request)
+            books.forEach(context.delete)
             saveContext()
         } catch {
-            print("Error removing bookmark: \(error)")
+            print("❌ Failed to remove bookmark: \(error)")
         }
     }
     
     func fetchBookmarkedBooks() -> [BookmarkedBook] {
-        let fetchRequest: NSFetchRequest<BookmarkedBook> = BookmarkedBook.fetchRequest()
-        fetchRequest.sortDescriptors = [NSSortDescriptor(key: "dateAdded", ascending: false)]
-        
-        // Filter by current user if logged in
-        if let userEmail = AuthService.shared.currentUserEmail {
-            let userFetchRequest: NSFetchRequest<User> = User.fetchRequest()
-            userFetchRequest.predicate = NSPredicate(format: "email == %@", userEmail)
-            
-            do {
-                if let user = try context.fetch(userFetchRequest).first {
-                    fetchRequest.predicate = NSPredicate(format: "user == %@", user)
-                }
-            } catch {
-                print("Error fetching user for bookmarks: \(error)")
-            }
+        // Check if we have valid cached data
+        if let cachedBooks = cachedBookmarkedBooks,
+           let lastFetch = lastFetchTime,
+           Date().timeIntervalSince(lastFetch) < cacheValidityDuration {
+            print("📚 Using cached bookmarked books")
+            return cachedBooks
         }
         
+        print("📚 Fetching bookmarked books from Core Data")
+        let request: NSFetchRequest<BookmarkedBook> = BookmarkedBook.fetchRequest()
+        
         do {
-            return try context.fetch(fetchRequest)
+            let books = try context.fetch(request)
+            // Update cache
+            self.cachedBookmarkedBooks = books
+            self.lastFetchTime = Date()
+            return books
         } catch {
-            print("Error fetching bookmarked books: \(error)")
+            print("❌ Failed to fetch bookmarked books: \(error)")
             return []
         }
     }
     
     private func saveContext() {
         if context.hasChanges {
-            do {
-                try context.save()
-            } catch {
-                print("Error saving context: \(error)")
-            }
+            CoreDataManager.shared.saveContext()
         }
     }
 } 

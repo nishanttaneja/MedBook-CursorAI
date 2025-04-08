@@ -13,6 +13,16 @@ struct Book: Codable, Identifiable {
         return URL(string: "https://covers.openlibrary.org/b/id/\(coverId)-M.jpg")
     }
     
+    // Custom initializer for creating Book instances
+    init(id: String, title: String, authorName: [String]?, ratingsAverage: Double?, ratingsCount: Int?, coverId: Int?) {
+        self.id = id
+        self.title = title
+        self.authorName = authorName
+        self.ratingsAverage = ratingsAverage
+        self.ratingsCount = ratingsCount
+        self.coverId = coverId
+    }
+    
     enum CodingKeys: String, CodingKey {
         case id = "key"
         case title

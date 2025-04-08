@@ -18,6 +18,8 @@ class HomeViewModel {
     
     private var currentSearchQuery = ""
     private var searchTask: Task<Void, Never>?
+    private var retryCount = 0
+    private let maxRetries = 2
     
     init() {
         // Load initial books
@@ -27,6 +29,9 @@ class HomeViewModel {
     func searchBooks(query: String) {
         // Cancel any ongoing search
         searchTask?.cancel()
+        
+        // Store the current search query
+        currentSearchQuery = query
         
         // If we're showing bookmarks, filter locally
         if isShowingBookmarks {
@@ -73,7 +78,6 @@ class HomeViewModel {
             return
         }
         
-        currentSearchQuery = searchQuery
         isShowingBookmarks = false
         
         // Create a new search task
@@ -130,7 +134,7 @@ class HomeViewModel {
         let fetchedBooks = bookmarkService.fetchBookmarkedBooks()
         print("📚 Fetched \(fetchedBooks.count) bookmarked books")
         
-        // Convert BookmarkedBook entities to Book models
+        // Convert BookmarkedBook entities to Book models - optimized version
         let convertedBooks = fetchedBooks.compactMap { bookmarkedBook -> Book? in
             guard let bookId = bookmarkedBook.bookId,
                   let title = bookmarkedBook.title else {
@@ -138,31 +142,18 @@ class HomeViewModel {
                 return nil
             }
             
-            // Create a dictionary that matches the Book's CodingKeys
-            let bookDict: [String: Any] = [
-                "key": bookId,
-                "title": title,
-                "author_name": bookmarkedBook.authorName.map { [$0] } as Any,
-                "ratings_average": String(bookmarkedBook.ratingsAverage), // Convert to string to match API format
-                "ratings_count": String(bookmarkedBook.ratingsCount), // Convert to string to match API format
-                "cover_i": Int(bookmarkedBook.coverId)
-            ]
+            // Create a Book directly instead of using JSON serialization/deserialization
+            let book = Book(
+                id: bookId,
+                title: title,
+                authorName: bookmarkedBook.authorName.map { [$0] } ?? [],
+                ratingsAverage: bookmarkedBook.ratingsAverage,
+                ratingsCount: Int(bookmarkedBook.ratingsCount),
+                coverId: Int(bookmarkedBook.coverId)
+            )
             
-            // Convert dictionary to JSON data
-            guard let jsonData = try? JSONSerialization.data(withJSONObject: bookDict) else {
-                print("❌ Failed to serialize book data for: \(title)")
-                return nil
-            }
-            
-            // Decode the JSON data into a Book
-            do {
-                let book = try JSONDecoder().decode(Book.self, from: jsonData)
-                print("✅ Successfully converted book: \(book.title)")
-                return book
-            } catch {
-                print("❌ Failed to decode book data for: \(title), error: \(error)")
-                return nil
-            }
+            print("✅ Successfully converted book: \(book.title)")
+            return book
         }
         
         // Update the books array with the converted books
@@ -214,7 +205,7 @@ class HomeViewModel {
             let fetchedBooks = bookmarkService.fetchBookmarkedBooks()
             print("📚 Fetched \(fetchedBooks.count) bookmarked books after toggle")
             
-            // Convert BookmarkedBook entities to Book models
+            // Convert BookmarkedBook entities to Book models - optimized version
             let convertedBooks = fetchedBooks.compactMap { bookmarkedBook -> Book? in
                 guard let bookId = bookmarkedBook.bookId,
                       let title = bookmarkedBook.title else {
@@ -222,31 +213,18 @@ class HomeViewModel {
                     return nil
                 }
                 
-                // Create a dictionary that matches the Book's CodingKeys
-                let bookDict: [String: Any] = [
-                    "key": bookId,
-                    "title": title,
-                    "author_name": bookmarkedBook.authorName.map { [$0] } as Any,
-                    "ratings_average": String(bookmarkedBook.ratingsAverage), // Convert to string to match API format
-                    "ratings_count": String(bookmarkedBook.ratingsCount), // Convert to string to match API format
-                    "cover_i": Int(bookmarkedBook.coverId)
-                ]
+                // Create a Book directly instead of using JSON serialization/deserialization
+                let book = Book(
+                    id: bookId,
+                    title: title,
+                    authorName: bookmarkedBook.authorName.map { [$0] } ?? [],
+                    ratingsAverage: bookmarkedBook.ratingsAverage,
+                    ratingsCount: Int(bookmarkedBook.ratingsCount),
+                    coverId: Int(bookmarkedBook.coverId)
+                )
                 
-                // Convert dictionary to JSON data
-                guard let jsonData = try? JSONSerialization.data(withJSONObject: bookDict) else {
-                    print("❌ Failed to serialize book data for: \(title)")
-                    return nil
-                }
-                
-                // Decode the JSON data into a Book
-                do {
-                    let book = try JSONDecoder().decode(Book.self, from: jsonData)
-                    print("✅ Successfully converted book: \(book.title)")
-                    return book
-                } catch {
-                    print("❌ Failed to decode book data for: \(title), error: \(error)")
-                    return nil
-                }
+                print("✅ Successfully converted book: \(book.title)")
+                return book
             }
             
             // Update the books array with the converted books
@@ -301,6 +279,7 @@ class HomeViewModel {
             books = []
             currentOffset = 0
             hasMoreResults = true
+            retryCount = 0
         }
         
         guard hasMoreResults else { return }
@@ -345,7 +324,7 @@ class HomeViewModel {
                 onBooksUpdated?()
             }
         } catch {
-            print("❌ Search error: \(error.localizedDescription)")
+            print("❌ Search error: \(error)")
             
             // Check if the error is due to task cancellation
             if (error as NSError).domain == NSURLErrorDomain && 
@@ -358,16 +337,77 @@ class HomeViewModel {
                 return
             }
             
+            // Handle NetworkError cases with more descriptive messages
+            var errorMessage: String
+            var shouldRetry = false
+            
+            if let networkError = error as? NetworkError {
+                switch networkError {
+                case .invalidURL:
+                    errorMessage = "Invalid search URL"
+                case .noData:
+                    errorMessage = "No data received from server"
+                case .decodingError:
+                    errorMessage = "Failed to parse search results"
+                case .serverError(let message):
+                    if message.contains("status code 500") {
+                        errorMessage = "The Open Library service is temporarily unavailable"
+                        shouldRetry = true
+                    } else if message.contains("status code 429") {
+                        errorMessage = "Too many requests. Please try again later"
+                    } else if message.contains("status code 404") {
+                        errorMessage = "No books found matching your search"
+                    } else {
+                        errorMessage = "Server error: \(message)"
+                        shouldRetry = message.contains("status code 5")
+                    }
+                }
+            } else {
+                errorMessage = "Failed to search books: \(error.localizedDescription)"
+            }
+            
+            // Retry logic for server errors
+            if shouldRetry && retryCount < maxRetries {
+                retryCount += 1
+                print("🔄 Retrying search (attempt \(retryCount)/\(maxRetries))")
+                
+                // Add a small delay before retrying
+                try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 * Double(retryCount)))
+                
+                // Check if the task is still valid before retrying
+                guard !Task.isCancelled else {
+                    print("⚠️ Search task was cancelled before retry")
+                    await MainActor.run {
+                        isLoading = false
+                        onLoadingStateChanged?(false)
+                    }
+                    return
+                }
+                
+                // Create a new task for the retry to avoid recursion issues
+                let retryTask = Task {
+                    await performSearch(resetResults: false)
+                }
+                
+                // Wait for the retry task to complete
+                await retryTask.value
+                return
+            } else if shouldRetry {
+                // We've reached max retries but still want to retry
+                print("⚠️ Maximum retry attempts reached (\(maxRetries))")
+                errorMessage = "The Open Library service is temporarily unavailable. Please try again later."
+            }
+            
             // Only show error if we don't have any books yet
             if books.isEmpty {
                 await MainActor.run {
                     isLoading = false
                     onLoadingStateChanged?(false)
-                    onError?("Failed to search books: \(error.localizedDescription)")
+                    onError?(errorMessage)
                 }
             } else {
                 // If we already have books, just log the error but don't show it to the user
-                print("⚠️ Search error occurred but books are already loaded")
+                print("⚠️ Search error occurred but books are already loaded: \(errorMessage)")
                 await MainActor.run {
                     isLoading = false
                     onLoadingStateChanged?(false)
